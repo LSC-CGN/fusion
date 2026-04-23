@@ -276,6 +276,26 @@ function Tile({title,icon,accent="var(--g)",right,children,onClick}){
 }
 
 // ---------- AI Bot (persistent) ----------
+
+// ── Agenten-Routing: Schlagwort → Agent ──────────────────────────────
+const AGENT_ROUTE=[
+  {id:"eddy",  name:"Eddy",  keys:["energie","strom","gas","kwh","enpi","verbrauch","lastgang","lastspitze","kpi","seu","peak","druckluft","presse"]},
+  {id:"paula", name:"Paula", keys:["massnahme","maßnahme","roi","investition","amortisation","kfw","förder","kosten","einsparung","effizienz","projekt"]},
+  {id:"dora",  name:"Dora",  keys:["dokument","freigabe","sop","pflicht","handbuch","richtlinie","revision","vorlage","upload","norm"]},
+  {id:"alma",  name:"Alma",  keys:["audit","gap","analyse","bewertung","benchmark","performance","lücke","bereit","check","konformität"]},
+  {id:"raya",  name:"Raya",  keys:["nachweis","bericht","bafa","report","meldung","export","antrag","formulare","monitoring"]},
+  {id:"carl",  name:"Carl",  keys:["capa","abweichung","alarm","fehler","nichtkonformität","korrektur","ausnahme","grenzwert","kvp"]},
+];
+function routeToAgent(text){
+  const low=text.toLowerCase();
+  let best=null,bestScore=0;
+  for(const a of AGENT_ROUTE){
+    const score=a.keys.filter(k=>low.includes(k)).length;
+    if(score>bestScore){bestScore=score;best=a;}
+  }
+  return bestScore>0?best:null;
+}
+
 function AiBot(){
   const {stamm,activeTab,recentContext,t,aiPreload,setAiPreload}=useContext(AppCtx);
   const [open,setOpen]=useState(true);
@@ -292,7 +312,14 @@ function AiBot(){
   useEffect(()=>{
     if(aiPreload){
       setOpen(true);
-      setMsg(aiPreload);
+      const agentMatch=aiPreload.match(/^\[An ([^\]]+)\] (.+)$/);
+      if(agentMatch){
+        const [,aName,aText]=agentMatch;
+        setLog(prev=>[...prev,{role:"route",text:"→ Direktnachricht an "+aName}]);
+        setMsg(aText);
+      } else {
+        setMsg(aiPreload);
+      }
       setAiPreload(null);
       setTimeout(()=>{ if(inputRef.current){ inputRef.current.focus(); inputRef.current.scrollIntoView({behavior:"smooth",block:"nearest"}); } },50);
       window.scrollTo({top:0,behavior:"smooth"});
@@ -303,10 +330,13 @@ function AiBot(){
     const text=msg.trim();
     if(!text||busy)return;
     setMsg("");
-    const newLog=[...log,{role:"user",text}];
+    const routed=routeToAgent(text);
+    const routeNote=routed?{role:"route",text:"→ Weitergeleitet an "+routed.name}:null;
+    const newLog=[...log,{role:"user",text},...(routeNote?[routeNote]:[])];
     setLog(newLog);setBusy(true);
     try{
-      const sys=`Du bist der KI-Energieexperte im GreenMetric ControlCenter für ${FIRMA}. Aktueller Tab: "${activeTab}". Branche: ${stamm.branche}. Standort: ${stamm.standort}. Jahresverbrauch Strom: ${stamm.jahresverbrauchStrom.toLocaleString("de-DE")} kWh, Gas: ${stamm.jahresverbrauchGas.toLocaleString("de-DE")} kWh. Strompreis: ${stamm.strompreis} ct/kWh, Gaspreis: ${stamm.gaspreis} ct/kWh, Diskontsatz: ${stamm.diskontsatz}%. Du kennst ISO 50001 (Kap. 4-10), DIN 17463 (Kapitalwert/IRR/ROI/Amortisation) und das BAFA-Merkblatt (Besondere Ausgleichsregelung, Grüne Konditionalität). Antworte präzise, fachlich, auf Deutsch. Max. 6 Sätze, außer ausdrücklich länger gefordert.${recentContext?" Aktueller Datenkontext: "+recentContext:""}`;
+      const agentCtx=routed?` Ich antworte als Spezialist "${routed.name}".`:"";
+      const sys=`Du bist der KI-Energieexperte im GreenMetric ControlCenter für ${FIRMA}.${agentCtx} Aktueller Tab: "${activeTab}". Branche: ${stamm.branche}. Standort: ${stamm.standort}. Jahresverbrauch Strom: ${stamm.jahresverbrauchStrom.toLocaleString("de-DE")} kWh, Gas: ${stamm.jahresverbrauchGas.toLocaleString("de-DE")} kWh. Strompreis: ${stamm.strompreis} ct/kWh, Gaspreis: ${stamm.gaspreis} ct/kWh, Diskontsatz: ${stamm.diskontsatz}%. Du kennst ISO 50001 (Kap. 4-10), DIN 17463 (Kapitalwert/IRR/ROI/Amortisation) und das BAFA-Merkblatt (Besondere Ausgleichsregelung, Grüne Konditionalität). Antworte präzise, fachlich, auf Deutsch. Max. 6 Sätze, außer ausdrücklich länger gefordert.${recentContext?" Aktueller Datenkontext: "+recentContext:""}`;
       const resp=await fetch("https://controlcenter.lschneider.workers.dev",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
@@ -344,10 +374,15 @@ function AiBot(){
     ),
     // Expanded log
     open&&h("div",{ref:scrollRef,className:"scroll fadein",style:{maxHeight:340,overflowY:"auto",borderTop:"1px solid var(--sep)",padding:"10px 16px",background:"var(--s3)"}},
-      log.map((m,i)=>h("div",{key:i,style:{marginBottom:10,display:"flex",gap:8}},
-        h("div",{style:{fontFamily:"var(--mono)",fontSize:16,color:m.role==="user"?"var(--bl)":"var(--g)",width:40,flexShrink:0,paddingTop:2,textTransform:"uppercase"}},m.role==="user"?"Du":"KI"),
-        h("div",{style:{fontSize:16,lineHeight:1.5,color:"var(--t)",whiteSpace:"pre-wrap"}},m.text)
-      )),
+      log.map((m,i)=>m.role==="route"
+        ?h("div",{key:i,style:{marginBottom:6,paddingLeft:4}},
+            h("div",{style:{display:"inline-block",fontFamily:"var(--mono)",fontSize:12,
+                            color:"var(--g)",opacity:.75,background:"var(--s1)",
+                            border:"1px solid var(--b)",borderRadius:3,padding:"2px 8px"}},m.text))
+        :h("div",{key:i,style:{marginBottom:10,display:"flex",gap:8}},
+            h("div",{style:{fontFamily:"var(--mono)",fontSize:16,color:m.role==="user"?"var(--bl)":"var(--g)",width:40,flexShrink:0,paddingTop:2,textTransform:"uppercase"}},m.role==="user"?"Du":"KI"),
+            h("div",{style:{fontSize:16,lineHeight:1.5,color:"var(--t)",whiteSpace:"pre-wrap"}},m.text)
+        )),
       busy&&h("div",{style:{fontSize:16,color:"var(--faint)",fontFamily:"var(--mono)"}},"…")
     )
   );
@@ -3711,7 +3746,7 @@ function KaiPanel({tab}){
                            border:"1px solid var(--b)",borderRadius:3,padding:"1px 5px"}},
             "Koordinator")
         ),
-        h("div",{style:{fontSize:13,color:"var(--t2)",fontFamily:"var(--mono)",marginTop:2}},
+        h("div",{style:{fontSize:15,color:"var(--t2)",fontFamily:"var(--mono)",marginTop:3}},
           "Aktiver Bereich: ",
           h("span",{style:{color:"var(--g)",fontWeight:600}},tabLabels[tab]||tab)
         )
@@ -3982,42 +4017,133 @@ function WTaskLink({item,agentColor,setTab}){
   const shortTab={iso:"ISO",dok:"Dok.",lg:"Lastgang",kpi:"KPIs",kv:"Verbr.",
                   mass:"Ma\u00dfn.",rep:"Report",alrm:"Alarme",ki:"KI",sup:"Support"};
   return h("div",{style:{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",
-                         padding:"8px 10px",background:"var(--bg)",borderRadius:4,border:"1px solid var(--b)"}},
-    h("div",{style:{display:"flex",flexDirection:"column",gap:2}},
-      h("span",{style:{fontSize:13,color:"var(--t)",lineHeight:1.4}},item.text),
-      h("span",{style:{fontSize:12,fontFamily:"var(--mono)",color:dueCol,fontWeight:d<0?700:400}},dueStr)
+                         padding:"10px 14px",background:"var(--bg)",borderRadius:4,border:"1px solid var(--b)"}},
+    h("div",{style:{display:"flex",flexDirection:"column",gap:3}},
+      h("span",{style:{fontSize:15,color:"var(--t)",lineHeight:1.45}},item.text),
+      h("span",{style:{fontSize:13,fontFamily:"var(--mono)",color:dueCol,fontWeight:d<0?700:400}},dueStr)
     ),
     h("button",{onClick:()=>setTab(item.tab),style:{
-      padding:"6px 12px",background:agentColor,color:"#fff",border:"none",
-      borderRadius:4,cursor:"pointer",fontFamily:"var(--mono)",fontSize:12,fontWeight:600,whiteSpace:"nowrap"
+      padding:"8px 16px",background:agentColor,color:"#fff",border:"none",
+      borderRadius:4,cursor:"pointer",fontFamily:"var(--mono)",fontSize:13,fontWeight:600,whiteSpace:"nowrap"
     }},"\u2192\u202f"+(shortTab[item.tab]||item.tab))
   );
 }
 
 // ── Agenten-Karte (Spezialisten) ───────────────────────
-function WAgentCard({agent,setTab,t}){
+
+// ── English translations for WELCOME_AGENTS ───────────────────────────────
+const WELCOME_EN={
+  kai:{
+    role:"ISO Coordinator",
+    intro:"Hi, I\u2019m Kai. I keep track of all ISO\u202f50001 requirements and coordinate the team \u2014 so nothing falls through the cracks.",
+    statusMsg:"Three items are certification-relevant this week:",
+    items:["Ch.\u202f7.5: 3 documents overdue \u2014 direct audit issue",
+           "Ch.\u202f10.1: 2 CAPAs without root-cause evidence",
+           "Ch.\u202f9.1: Document EnPI deviation H2-press"]
+  },
+  eddy:{
+    role:"Data Analyst",
+    intro:"Hi, I\u2019m Eddy. I analyze your energy data, explain deviations, and keep EnPIs and significant energy uses current.",
+    statusMsg:"This week we should look at:",
+    items:["EnPI H2-press: \u22124.3\u202f% deviation since week\u202f16 \u2014 needs explanation",
+           "Review SEU list Q2 \u2014 5 key consumers, 75\u202f% of total consumption"]
+  },
+  paula:{
+    role:"Action Planner",
+    intro:"Hi, I\u2019m Paula. I make sure your energy-saving ideas are prioritized by impact and consistently implemented.",
+    statusMsg:"I have two items on my radar:",
+    items:["Prioritize Q3 action plan \u2014 8 candidates, 3.2\u202fGWh potential",
+           "LED retrofit Hall\u202fB: check progress (78\u202f% installed)"]
+  },
+  dora:{
+    role:"Document Guardian",
+    intro:"Hi, I\u2019m Dora. I ensure your documentation is always complete, approved, and audit-ready.",
+    statusMsg:"I see urgent action needed:",
+    items:["3 documents overdue for revision \u2014 SOP Compressed Air most critical (47\u202fd)",
+           "Approve SOP Compressed Air Leakage \u2014 2 of 3 approvals still pending"]
+  },
+  alma:{
+    role:"Audit Coach",
+    intro:"Hi, I\u2019m Alma. I prepare you for internal and external audits and make sure all ISO gaps are closed.",
+    statusMsg:"For the upcoming audit we should soon handle:",
+    items:["Gap analysis Internal Audit Q2 \u2014 3 critical points, 9 hints",
+           "Management Review Q2 agenda \u2014 3 open action items from last review"]
+  },
+  raya:{
+    role:"Evidence Writer",
+    intro:"Hi, I\u2019m Raya. I create your evidence for BAFA, management, banks, and customers \u2014 precisely and on time.",
+    statusMsg:"Two items coming up this week:",
+    items:["Executive summary Q2 \u2014 80\u202f% done, key message \u22128.2\u202f% EnPI",
+           "BAFA proof 2026 \u2014 raw data complete, approval pending"]
+  },
+  carl:{
+    role:"CIP Expert",
+    intro:"Hi, I\u2019m Carl. I help you systematically learn from errors and deviations \u2014 with structured root-cause analyses and CAPA tracking.",
+    statusMsg:"I see urgent action needed:",
+    items:["2 CAPA actions overdue (12\u202fd) \u2014 root-cause evidence ready",
+           "Ishikawa for deviation Hall\u202fB \u2014 4 cause clusters identified"]
+  }
+};
+
+
+// ── Direktchat-Feld für Agenten-Karten ────────────────────────────────────
+function WAgentChatInput({agentName}){
+  const {setAiPreload,t}=React.useContext(AppCtx);
+  const [val,setVal]=React.useState('');
+  function submit(){
+    const text=val.trim();
+    if(!text)return;
+    setAiPreload('[An '+agentName+'] '+text);
+    setVal('');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  return h('div',{style:{display:'flex',gap:6,marginTop:6,paddingTop:12,borderTop:'1px solid var(--b)'}},
+    h('input',{
+      value:val,
+      onChange:e=>setVal(e.target.value),
+      onKeyDown:e=>{if(e.key==='Enter')submit();},
+      placeholder:t('Schreib '+agentName+' direkt an …','Message '+agentName+' directly …'),
+      style:{flex:1,fontSize:13,padding:'6px 10px',background:'var(--bg)',
+             border:'1px solid var(--b)',borderRadius:4,color:'var(--t)',
+             fontFamily:'inherit',outline:'none',minWidth:0}
+    }),
+    h('button',{
+      onClick:submit,
+      style:{padding:'6px 12px',background:'var(--g)',color:'#fff',border:'none',
+             borderRadius:4,cursor:'pointer',fontSize:13,fontWeight:600,
+             fontFamily:'var(--mono)',whiteSpace:'nowrap',flexShrink:0}
+    },t('Senden','Send'))
+  );
+}
+
+function WAgentCard({agent,setTab,t,lang}){
   const urgBorder={urgent:"#ef4444",week:"#d97706",planned:"#3b82f6",ok:"#10b981"}[agent.statusLevel]||"var(--b)";
-  return h("div",{className:"tile",style:{padding:"20px",display:"flex",flexDirection:"column",gap:14,borderTop:"3px solid "+urgBorder}},
-    h("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:8,textAlign:"center"}},
-      h(WAgentAvatar,{agent,size:72}),
+  const _en=lang==="en"&&WELCOME_EN[agent.id]||null;
+  const _role=_en?_en.role:agent.role;
+  const _intro=_en?_en.intro:agent.intro;
+  const _statusMsg=_en?_en.statusMsg:agent.statusMsg;
+  return h("div",{className:"tile",style:{padding:"28px",display:"flex",flexDirection:"column",gap:18,borderTop:"3px solid "+urgBorder}},
+    h("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,textAlign:"center"}},
+      h(WAgentAvatar,{agent,size:90}),
       h("div",null,
-        h("div",{style:{fontSize:17,fontWeight:700,color:"var(--t)"}},agent.name),
-        h("div",{style:{fontSize:13,color:"var(--t2)",fontFamily:"var(--mono)",marginTop:2}},agent.role)
+        h("div",{style:{fontSize:21,fontWeight:700,color:"var(--t)"}},agent.name),
+        h("div",{style:{fontSize:15,color:"var(--t2)",fontFamily:"var(--mono)",marginTop:3}},_role)
       )
     ),
-    h("div",{style:{fontSize:13,color:"var(--t2)",lineHeight:1.6,fontStyle:"italic",borderLeft:"2px solid var(--b)",paddingLeft:10}},agent.intro),
+    h("div",{style:{fontSize:15,color:"var(--t2)",lineHeight:1.65,fontStyle:"italic",borderLeft:"3px solid var(--b)",paddingLeft:12}},_intro),
     h("div",null,
       h("div",{style:{display:"flex",alignItems:"center",gap:6,marginBottom:8}},
         h(WStatusDot,{level:agent.statusLevel}),
-        h("span",{style:{fontSize:13,fontWeight:600,color:"var(--t)"}},agent.statusMsg)
+        h("span",{style:{fontSize:15,fontWeight:600,color:"var(--t)"}},_statusMsg)
       ),
       agent.items&&agent.items.length>0
-        ?h("div",{style:{display:"flex",flexDirection:"column",gap:6}},
-            ...agent.items.map((item,i)=>h(WTaskLink,{key:i,item,agentColor:agent.color,setTab})))
+        ?h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
+            ...agent.items.map((item,i)=>h(WTaskLink,{key:i,item:_en&&_en.items[i]?{...item,text:_en.items[i]}:item,agentColor:agent.color,setTab})))
         :h("div",{style:{fontSize:13,color:"var(--t2)",fontFamily:"var(--mono)",padding:"8px 10px",
                          background:"var(--bg)",borderRadius:4,border:"1px solid var(--b)"}},
             t("Aktuell kein Handlungsbedarf.","No action needed right now."))
-    )
+    ),
+    h(WAgentChatInput,{agentName:agent.name})
   );
 }
 
@@ -4025,29 +4151,34 @@ function WAgentCard({agent,setTab,t}){
 function WKaiCard({agent,setTab,t,lang}){
   const now=new Date();
   const fmt=now.toLocaleDateString(lang==="en"?"en-GB":"de-DE",{weekday:"long",day:"2-digit",month:"long",year:"numeric"});
-  return h("div",{className:"tile",style:{padding:"22px 24px",borderTop:"3px solid #334155",
-                                           display:"grid",gridTemplateColumns:"auto 1fr",gap:20,alignItems:"flex-start"}},
-    h("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:8,paddingTop:4}},
-      h(WKaiAvatar,{size:80}),
-      h("div",{style:{fontSize:14,fontWeight:700,color:"var(--t)",textAlign:"center"}},"Kai"),
+  const _enK=lang==="en"&&WELCOME_EN.kai||null;
+  const _kRole=_enK?_enK.role:"Koordinator";
+  const _kIntro=_enK?_enK.intro:agent.intro;
+  const _kStatusMsg=_enK?_enK.statusMsg:agent.statusMsg;
+  return h("div",{className:"tile",style:{padding:"32px 36px",borderTop:"3px solid #334155",
+                                           display:"grid",gridTemplateColumns:"auto 1fr",gap:28,alignItems:"flex-start"}},
+    h("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,paddingTop:4}},
+      h(WKaiAvatar,{size:100}),
+      h("div",{style:{fontSize:17,fontWeight:700,color:"var(--t)",textAlign:"center"}},"Kai"),
       h("div",{style:{fontSize:12,fontFamily:"var(--mono)",color:"var(--faint)",border:"1px solid var(--b)",
-                      borderRadius:3,padding:"2px 7px",whiteSpace:"nowrap"}},"Koordinator")
+                      borderRadius:3,padding:"2px 7px",whiteSpace:"nowrap"}},_kRole)
     ),
-    h("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+    h("div",{style:{display:"flex",flexDirection:"column",gap:16}},
       h("div",null,
-        h("div",{style:{fontSize:12,fontFamily:"var(--mono)",color:"var(--faint)",textTransform:"uppercase",letterSpacing:".10em"}},fmt),
-        h("div",{style:{fontSize:22,fontWeight:700,color:"var(--t)",marginTop:4,letterSpacing:"-.01em"}},
+        h("div",{style:{fontSize:13,fontFamily:"var(--mono)",color:"var(--faint)",textTransform:"uppercase",letterSpacing:".10em"}},fmt),
+        h("div",{style:{fontSize:27,fontWeight:700,color:"var(--t)",marginTop:4,letterSpacing:"-.01em"}},
           t("Guten Morgen \u2014 hier ist euer Status.","Good morning \u2014 here\u2019s your status."))
       ),
-      h("div",{style:{fontSize:14,color:"var(--t2)",lineHeight:1.6,fontStyle:"italic",borderLeft:"2px solid var(--b)",paddingLeft:10}},agent.intro),
+      h("div",{style:{fontSize:16,color:"var(--t2)",lineHeight:1.65,fontStyle:"italic",borderLeft:"3px solid var(--b)",paddingLeft:14}},_kIntro),
       h("div",null,
         h("div",{style:{display:"flex",alignItems:"center",gap:6,marginBottom:8}},
           h(WStatusDot,{level:"urgent"}),
-          h("span",{style:{fontSize:14,fontWeight:600,color:"var(--t)"}},agent.statusMsg)
+          h("span",{style:{fontSize:16,fontWeight:600,color:"var(--t)"}},_kStatusMsg)
         ),
         h("div",{style:{display:"flex",flexDirection:"column",gap:6}},
-          ...agent.items.map((item,i)=>h(WTaskLink,{key:i,item,agentColor:agent.color,setTab})))
-      )
+          ...agent.items.map((item,i)=>h(WTaskLink,{key:i,item:_enK&&_enK.items[i]?{...item,text:_enK.items[i]}:item,agentColor:agent.color,setTab})))
+      ),
+      h(WAgentChatInput,{agentName:"Kai"})
     )
   );
 }
@@ -4056,10 +4187,10 @@ function WKaiCard({agent,setTab,t,lang}){
 function WelcomeHome({setTab,t,lang}){
   const kai=WELCOME_AGENTS.find(a=>a.id==="kai");
   const specialists=WELCOME_AGENTS.filter(a=>a.id!=="kai");
-  return h("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px 48px",display:"flex",flexDirection:"column",gap:20}},
+  return h("div",{style:{maxWidth:1500,margin:"0 auto",padding:"36px 32px 64px",display:"flex",flexDirection:"column",gap:28}},
     h(WKaiCard,{agent:kai,setTab,t,lang}),
-    h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:16}},
-      ...specialists.map(a=>h(WAgentCard,{key:a.id,agent:a,setTab,t}))
+    h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(380px,1fr))",gap:24}},
+      ...specialists.map(a=>h(WAgentCard,{key:a.id,agent:a,setTab,t,lang}))
     )
   );
 }
